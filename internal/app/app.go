@@ -5,10 +5,13 @@ import (
 	"backend-test-app/internal/config"
 	httphandler "backend-test-app/internal/http"
 	"backend-test-app/internal/logic"
+	"backend-test-app/internal/repository/postgres"
 	"backend-test-app/internal/repository/skinport"
 	"backend-test-app/pkg/httpClient"
 	"backend-test-app/pkg/logger"
+	entitypostgres "backend-test-app/pkg/postgres"
 	"backend-test-app/pkg/signal"
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -17,13 +20,34 @@ import (
 func Run(cfg config.Config) {
 	log := logger.New()
 
-	skinportHTTPClient := httpClient.New(10 * time.Second)
-	skinportClient := skinport.NewClient(skinportHTTPClient)
-	itemsCache := cache.NewItemsCache(time.Duration(cfg.CacheTTLMins) * time.Minute)
-	itemsLogic := logic.NewItemsLogic(skinportClient, itemsCache)
-	itemsHandler := httphandler.NewItemsHandler(itemsLogic)
+	pgPool, err := entitypostgres.NewPool(context.Background(), cfg.PostgresDSN)
+	if err != nil {
+		log.Error("cant connect to postgres", "error", err)
+		panic(err)
+	}
+	defer pgPool.Close()
 
-	router := httphandler.NewRouter(itemsHandler)
+	skinportHTTPClient := httpClient.New(10 * time.Second)
+
+	// repo and cache
+	var (
+		skinportClient = skinport.NewClient(skinportHTTPClient)
+		itemsCache     = cache.NewItemsCache(time.Duration(cfg.CacheTTLMins) * time.Minute)
+		userRepository = postgres.NewUserRepository(pgPool)
+	)
+	// logic
+	var (
+		itemsLogic = logic.NewItemsLogic(skinportClient, itemsCache)
+		userLogic  = logic.NewUserLogic(userRepository)
+	)
+
+	// http
+	var (
+		itemsHandler = httphandler.NewItemsHandler(itemsLogic)
+		userHandler  = httphandler.NewUserHandler(userLogic)
+
+		router = httphandler.NewRouter(itemsHandler, userHandler)
+	)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.HTTPPort,
