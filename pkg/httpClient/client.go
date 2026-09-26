@@ -1,0 +1,13 @@
+package httpClient
+
+import (
+	"net/http"
+	"time"
+)
+
+func New(timeout time.Duration) *http.Client {
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	return &http.Client{Timeout: timeout}
+}
